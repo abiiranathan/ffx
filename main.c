@@ -787,20 +787,33 @@ static void register_subcommands(FlagParser* root, AppCtx* ctx) {
                                             "Transcode a media file to a different container or codec.", cmd_convert);
         flag_req_string(p, "input", 'i', "Input file path.", &s_convert.input);
         flag_req_string(p, "output", 'o', "Output file path.", &s_convert.output);
-        flag_string(p, "video-codec", 'V', "Video codec (e.g. libx264, libx265, copy).", &s_convert.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset (e.g. fast, slow).", &s_convert.preset);
-        flag_int32(p, "crf", 0, "Constant Rate Factor 0-51.", &s_convert.crf);
-        flag_int32(p, "video-bitrate", 0, "Video target bitrate kbps.", &s_convert.vbitrate);
-        flag_string(p, "resolution", 0, "Output resolution e.g. 1920x1080.", &s_convert.resolution);
-        flag_float(p, "fps", 0, "Output frame rate.", &s_convert.fps);
-        flag_string(p, "audio-codec", 'A', "Audio codec.", &s_convert.audio_codec);
-        flag_int32(p, "audio-bitrate", 0, "Audio bitrate kbps.", &s_convert.abitrate);
-        flag_int32(p, "sample-rate", 0, "Audio sample rate Hz.", &s_convert.sample_rate);
-        flag_int32(p, "channels", 0, "Audio channels.", &s_convert.channels);
-        flag_string(p, "format", 'f', "Force output container format.", &s_convert.format);
-        flag_bool(p, "no-video", 0, "Strip video stream.", &s_convert.no_video);
-        flag_bool(p, "no-audio", 0, "Strip audio stream.", &s_convert.no_audio);
-        flag_bool(p, "stream-copy", 'c', "Copy all streams.", &s_convert.stream_copy);
+        flag_string(p, "video-codec", 'V', "Video encoder (e.g. libx264, libx265, vp9, copy). Maps to -c:v.",
+                    &s_convert.video_codec);
+        flag_string(p, "preset", 'p',
+                    "Encoder speed/quality preset (e.g. ultrafast, medium, veryslow). Maps to -preset.",
+                    &s_convert.preset);
+        flag_int32(p, "crf", 0,
+                   "Constant Rate Factor 0-51, lower is higher quality (default: -1, disabled). Maps to -crf.",
+                   &s_convert.crf);
+        flag_int32(p, "video-bitrate", 0, "Target video bitrate in kbps. Maps to -b:v.", &s_convert.vbitrate);
+        flag_string(p, "resolution", 0, "Output resolution, e.g. 1920x1080. Maps to -s.", &s_convert.resolution);
+        flag_float(p, "fps", 0, "Output frame rate, e.g. 30, 60, 23.976. Maps to -r.", &s_convert.fps);
+        flag_string(p, "audio-codec", 'A', "Audio encoder (e.g. aac, libmp3lame, opus, flac, copy). Maps to -c:a.",
+                    &s_convert.audio_codec);
+        flag_int32(p, "audio-bitrate", 0, "Target audio bitrate in kbps (e.g. 128, 192, 320). Maps to -b:a.",
+                   &s_convert.abitrate);
+        flag_int32(p, "sample-rate", 0, "Audio sample rate in Hz (e.g. 44100, 48000). Maps to -ar.",
+                   &s_convert.sample_rate);
+        flag_int32(p, "channels", 0, "Audio channel count (1=mono, 2=stereo, 6=5.1). Maps to -ac.",
+                   &s_convert.channels);
+        flag_string(p, "format", 'f',
+                    "Force output container format, overriding the file extension (e.g. mp4, mkv, mp3). Maps to -f.",
+                    &s_convert.format);
+        flag_bool(p, "no-video", 0, "Strip the video stream entirely. Maps to -vn.", &s_convert.no_video);
+        flag_bool(p, "no-audio", 0, "Strip the audio stream entirely. Maps to -an.", &s_convert.no_audio);
+        flag_bool(p, "stream-copy", 'c',
+                  "Copy both video and audio streams directly without re-encoding. Maps to -c:v copy -c:a copy.",
+                  &s_convert.stream_copy);
     }
 
     /* ---- trim ----------------------------------------------------- */
@@ -808,217 +821,365 @@ static void register_subcommands(FlagParser* root, AppCtx* ctx) {
         FlagParser* p = flag_add_subcommand(root, "trim", "Cut a time range losslessly.", cmd_trim);
         flag_req_string(p, "input", 'i', "Input file.", &s_trim.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_trim.output);
-        flag_string(p, "start", 's', "Start timestamp.", &s_trim.start);
-        flag_string(p, "end", 'e', "End timestamp.", &s_trim.end);
-        flag_bool(p, "duration", 'd', "Treat --end as duration.", &s_trim.duration);
-        flag_bool(p, "accurate", 'a', "Use accurate seek.", &s_trim.accurate);
+        flag_string(p, "start", 's', "Start timestamp, e.g. 00:01:30 or seconds 90. Maps to -ss.", &s_trim.start);
+        flag_string(p, "end", 'e',
+                    "End position; an absolute timestamp by default, or a duration if --duration is set. Maps to -to "
+                    "(or -t with --duration).",
+                    &s_trim.end);
+        flag_bool(p, "duration", 'd',
+                  "Treat --end as a duration relative to --start instead of an absolute timestamp. Maps to -t instead "
+                  "of -to.",
+                  &s_trim.duration);
+        flag_bool(p, "accurate", 'a',
+                  "Use accurate (output-side) seeking: slower but frame-accurate, decoding all frames up to the "
+                  "timestamp. Default is fast (input-side) keyframe-based seeking.",
+                  &s_trim.accurate);
     }
 
     /* ---- compress ------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "compress", "Shrink a video to a target size.", cmd_compress);
+        FlagParser* p = flag_add_subcommand(root, "compress",
+                                            "Shrink a video to a target size using two-pass encoding.", cmd_compress);
         flag_req_string(p, "input", 'i', "Input file.", &s_compress.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_compress.output);
-        flag_req_float(p, "size-mb", 's', "Target output size in MiB.", &s_compress.size_mb);
-        flag_string(p, "codec", 'c', "Codec family: h264 h265 vp9.", &s_compress.codec);
-        flag_string(p, "preset", 'p', "Encoder preset (e.g. fast, slow).", &s_compress.preset);
-        flag_int32(p, "audio-bitrate", 0, "Audio bitrate budget kbps.", &s_compress.abitrate);
-        flag_bool(p, "copy-audio", 0, "Stream-copy audio.", &s_compress.copy_audio);
+        flag_req_float(p, "size-mb", 's',
+                       "Target output size in MiB; bitrate is calculated from this and the source duration.",
+                       &s_compress.size_mb);
+        flag_string(p, "codec", 'c', "Codec family: h264, h265, or vp9 (default: h264).", &s_compress.codec);
+        flag_string(p, "preset", 'p', "Encoder speed/compression preset (e.g. fast, slow).", &s_compress.preset);
+        flag_int32(p, "audio-bitrate", 0,
+                   "Audio bitrate budget in kbps, subtracted from the total size budget (default: 128).",
+                   &s_compress.abitrate);
+        flag_bool(p, "copy-audio", 0, "Stream-copy the original audio instead of re-encoding to --audio-bitrate.",
+                  &s_compress.copy_audio);
     }
 
     /* ---- audio ---------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "audio", "Audio track manipulation.", cmd_audio);
+        FlagParser* p = flag_add_subcommand(root, "audio",
+                                            "Audio track manipulation: extract, strip, replace, normalize, or mix.",
+                                            cmd_audio);
         flag_req_string(p, "input", 'i', "Primary input file.", &s_audio.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_audio.output);
-        flag_req_string(p, "op", 'O', "Operation: extract strip replace normalize mix.", &s_audio.op_str);
-        flag_string(p, "secondary", 's', "Secondary input.", &s_audio.secondary);
-        flag_string(p, "codec", 'c', "Audio output codec.", &s_audio.acodec);
-        flag_int32(p, "bitrate", 'b', "Audio bitrate kbps.", &s_audio.abitrate);
+        flag_req_string(
+            p, "op", 'O',
+            "Operation to perform: extract (isolate audio to its own file), strip (remove all audio, silent video), "
+            "replace (overwrite input\'s audio with --secondary\'s audio track), normalize (apply EBU R128 loudnorm), "
+            "or mix (blend primary and --secondary audio together).",
+            &s_audio.op_str);
+        flag_string(p, "secondary", 's', "Secondary input file path. Required for the replace and mix operations.",
+                    &s_audio.secondary);
+        flag_string(p, "codec", 'c', "Output audio codec (e.g. aac, libmp3lame, opus).", &s_audio.acodec);
+        flag_int32(p, "bitrate", 'b', "Target audio bitrate in kbps.", &s_audio.abitrate);
     }
 
     /* ---- thumbnail ------------------------------------------------ */
     {
-        FlagParser* p = flag_add_subcommand(root, "thumbnail", "Extract a representative frame.", cmd_thumbnail);
+        FlagParser* p = flag_add_subcommand(root, "thumbnail",
+                                            "Extract a representative frame from a video as an image.", cmd_thumbnail);
         flag_req_string(p, "input", 'i', "Input video file.", &s_thumbnail.input);
-        flag_req_string(p, "output", 'o', "Output image.", &s_thumbnail.output);
-        flag_string(p, "timestamp", 't', "Seek to this time.", &s_thumbnail.ts);
-        flag_string(p, "strategy", 's', "Frame strategy: time best middle.", &s_thumbnail.strat);
-        flag_int32(p, "width", 'W', "Scale width.", &s_thumbnail.width);
-        flag_int32(p, "height", 'H', "Scale height.", &s_thumbnail.height);
-        flag_int32(p, "quality", 'q', "JPEG quality.", &s_thumbnail.quality);
+        flag_req_string(p, "output", 'o', "Output image path (e.g. thumb.jpg, thumb.png).", &s_thumbnail.output);
+        flag_string(p, "timestamp", 't',
+                    "Time position to extract from, e.g. 00:02:15 or 135 (seconds). Used with --strategy time. Maps to "
+                    "-ss.",
+                    &s_thumbnail.ts);
+        flag_string(p, "strategy", 's',
+                    "Frame selection strategy: time (extract at --timestamp, the default), best (scan a batch of "
+                    "frames for the "
+                    "most visually representative one), or middle (extract the frame at the exact midpoint of the "
+                    "file's duration).",
+                    &s_thumbnail.strat);
+        flag_int32(p, "width", 'W', "Scale output width in pixels. Set to -1 to auto-scale preserving aspect ratio.",
+                   &s_thumbnail.width);
+        flag_int32(p, "height", 'H', "Scale output height in pixels. Set to -1 to auto-scale preserving aspect ratio.",
+                   &s_thumbnail.height);
+        flag_int32(p, "quality", 'q', "JPEG compression quality, 1-31, lower is better (default: 2). Maps to -q:v.",
+                   &s_thumbnail.quality);
     }
 
     /* ---- gif ------------------------------------------------------ */
     {
-        FlagParser* p = flag_add_subcommand(root, "gif", "Convert a video segment to a GIF.", cmd_gif);
+        FlagParser* p = flag_add_subcommand(root, "gif",
+                                            "Convert a video segment to an optimized, high-quality animated GIF.",
+                                            cmd_gif);
         flag_req_string(p, "input", 'i', "Input video.", &s_gif.input);
-        flag_req_string(p, "output", 'o', "Output GIF.", &s_gif.output);
-        flag_string(p, "start", 's', "Start timestamp.", &s_gif.start);
-        flag_string(p, "duration", 'd', "Duration.", &s_gif.duration);
-        flag_int32(p, "fps", 0, "GIF frame rate.", &s_gif.fps);
-        flag_int32(p, "width", 'w', "Width.", &s_gif.width);
-        flag_string(p, "stats", 0, "Palette stats mode.", &s_gif.stats);
-        flag_bool(p, "loop", 0, "Loop GIF.", &s_gif.loop);
+        flag_req_string(p, "output", 'o', "Output GIF file.", &s_gif.output);
+        flag_string(p, "start", 's', "Start timestamp within the source video, e.g. 00:00:10.5 or 10.5 (seconds).",
+                    &s_gif.start);
+        flag_string(p, "duration", 'd', "Duration of the GIF segment in seconds, e.g. 5 or 5.5.", &s_gif.duration);
+        flag_int32(p, "fps", 0, "GIF frame rate, typically 5-30 (default: 15).", &s_gif.fps);
+        flag_int32(p, "width", 'w',
+                   "Output width in pixels; height auto-scales to preserve aspect ratio (default: 480).", &s_gif.width);
+        flag_string(p, "stats", 0,
+                    "Palette generation stats mode: full (analyze every frame) or diff (track movement to minimize "
+                    "size). Default: full.",
+                    &s_gif.stats);
+        flag_bool(p, "loop", 0, "Loop the GIF indefinitely. If false, the GIF plays once (default: true).",
+                  &s_gif.loop);
     }
 
     /* ---- probe ---------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "probe", "Print media file metadata.", cmd_probe);
+        FlagParser* p = flag_add_subcommand(root, "probe", "Print media file format and stream metadata via ffprobe.",
+                                            cmd_probe);
         flag_req_string(p, "input", 'i', "File to probe.", &s_probe.input);
-        flag_bool(p, "json", 'j', "Dump raw ffprobe JSON.", &s_probe.raw_json);
+        flag_bool(p, "json", 'j',
+                  "Dump the raw ffprobe JSON output instead of the formatted summary. Maps to ffprobe -print_format "
+                  "json -show_format -show_streams.",
+                  &s_probe.raw_json);
     }
 
     /* ---- concat --------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "concat", "Losslessly concatenate same-codec files.", cmd_concat);
+        FlagParser* p = flag_add_subcommand(root, "concat",
+                                            "Concatenate multiple media files together; input files are given as "
+                                            "positional arguments.",
+                                            cmd_concat);
         flag_req_string(p, "output", 'o', "Output file.", &s_concat.output);
-        flag_bool(p, "reencode", 'r', "Re-encode.", &s_concat.reencode);
-        flag_string(p, "vcodec", 0, "Video codec.", &s_concat.vcodec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_concat.preset);
-        flag_string(p, "acodec", 0, "Audio codec.", &s_concat.acodec);
+        flag_bool(p, "reencode", 'r',
+                  "Re-encode the merged streams instead of stream-copying. Required if inputs have differing codecs, "
+                  "resolutions, or frame rates.",
+                  &s_concat.reencode);
+        flag_string(p, "vcodec", 0,
+                    "Video codec used when re-encoding (default: libx264). Ignored unless --reencode is set.",
+                    &s_concat.vcodec);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset. Ignored unless --reencode is set.",
+                    &s_concat.preset);
+        flag_string(p, "acodec", 0,
+                    "Audio codec used when re-encoding (default: aac). Ignored unless --reencode is set.",
+                    &s_concat.acodec);
     }
 
     /* ---- watermark ----------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "watermark", "Overlay an image on video.", cmd_watermark);
+        FlagParser* p = flag_add_subcommand(root, "watermark", "Overlay an image or video logo onto a video.",
+                                            cmd_watermark);
         flag_req_string(p, "input", 'i', "Input video file.", &s_watermark.input);
-        flag_req_string(p, "watermark", 'w', "Overlay image file.", &s_watermark.watermark);
+        flag_req_string(p, "watermark", 'w', "Watermark image or video asset to overlay (e.g. logo.png).",
+                        &s_watermark.watermark);
         flag_req_string(p, "output", 'o', "Output video file.", &s_watermark.output);
-        flag_string(p, "position", 'p', "Position: tl tr bl br c.", &s_watermark.position);
-        flag_int32(p, "margin", 0, "Edge margin.", &s_watermark.margin);
-        flag_float(p, "opacity", 0, "Overlay opacity.", &s_watermark.opacity);
-        flag_int32(p, "scale-width", 0, "Scale watermark width.", &s_watermark.scale_w);
-        flag_string(p, "vcodec", 0, "Output video codec.", &s_watermark.vcodec);
-        flag_string(p, "preset", 0, "Encoder preset (no short flag).",
+        flag_string(p, "position", 'p',
+                    "Anchor corner: tl (top-left), tr (top-right), bl (bottom-left), br (bottom-right, default), or c "
+                    "(center).",
+                    &s_watermark.position);
+        flag_int32(p, "margin", 0, "Edge margin in pixels for corner positions (default: 10).", &s_watermark.margin);
+        flag_float(p, "opacity", 0, "Watermark blending opacity, 0.0 (transparent) to 1.0 (opaque, default).",
+                   &s_watermark.opacity);
+        flag_int32(p, "scale-width", 0,
+                   "Resize the watermark to this width in pixels, preserving its aspect ratio. Set <= 0 to keep native "
+                   "size.",
+                   &s_watermark.scale_w);
+        flag_string(p, "vcodec", 0, "Output video codec (default: libx264).", &s_watermark.vcodec);
+        flag_string(p, "preset", 0, "Encoder speed/quality preset (no short flag; conflicts with --position's -p).",
                     &s_watermark.preset); /* Conflicted short flag 'p' omitted */
-        flag_int32(p, "crf", 0, "CRF.", &s_watermark.crf);
-        flag_bool(p, "copy-audio", 0, "Stream-copy audio.", &s_watermark.copy_audio);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_watermark.crf);
+        flag_bool(p, "copy-audio", 0, "Stream-copy the original audio instead of re-encoding (default: true).",
+                  &s_watermark.copy_audio);
     }
 
     /* ---- speed ---------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "speed", "Change playback speed.", cmd_speed);
+        FlagParser* p = flag_add_subcommand(root, "speed",
+                                            "Change video and audio playback speed, with pitch-preserving audio tempo.",
+                                            cmd_speed);
         flag_req_string(p, "input", 'i', "Input file.", &s_speed.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_speed.output);
-        flag_req_float(p, "factor", 'x', "Speed multiplier.", &s_speed.factor);
-        flag_string(p, "vcodec", 0, "Video codec.", &s_speed.vcodec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_speed.preset);
-        flag_string(p, "acodec", 0, "Audio codec.", &s_speed.acodec);
-        flag_int32(p, "crf", 0, "CRF.", &s_speed.crf);
-        flag_bool(p, "no-audio", 0, "Drop audio.", &s_speed.no_audio);
+        flag_req_float(p, "factor", 'x',
+                       "Speed multiplier; values > 1.0 speed up, < 1.0 slow down (e.g. 2.0 doubles speed, 0.5 halves "
+                       "it).",
+                       &s_speed.factor);
+        flag_string(p, "vcodec", 0, "Output video codec (default: libx264).", &s_speed.vcodec);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_speed.preset);
+        flag_string(p, "acodec", 0, "Output audio codec, used unless --no-audio is set (default: aac).",
+                    &s_speed.acodec);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_speed.crf);
+        flag_bool(p, "no-audio", 0, "Strip audio entirely instead of adjusting its tempo to match. Maps to -an.",
+                  &s_speed.no_audio);
     }
 
     /* ---- crop ----------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "crop", "Crop a video to a rectangular region.", cmd_crop);
+        FlagParser* p = flag_add_subcommand(root, "crop", "Crop video frames to a rectangular bounding box.", cmd_crop);
         flag_req_string(p, "input", 'i', "Input file.", &s_crop.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_crop.output);
-        flag_int32(p, "width", 'w', "Crop width.", &s_crop.width);
-        flag_int32(p, "height", 'h', "Crop height.", &s_crop.height);
-        flag_int32(p, "x", 'x', "X offset.", &s_crop.x);
-        flag_int32(p, "y", 'y', "Y offset.", &s_crop.y);
-        flag_bool(p, "copy-audio", 0, "Stream-copy audio.", &s_crop.copy_audio);
+        flag_int32(p, "width", 'w', "Crop box width in pixels. Required, must be > 0.", &s_crop.width);
+        flag_int32(p, "height", 'h', "Crop box height in pixels. Required, must be > 0.", &s_crop.height);
+        flag_int32(p, "x", 'x',
+                   "Horizontal offset of the crop box's top-left corner. Negative centers horizontally: (in_w-out_w)/2 "
+                   "(default: -1).",
+                   &s_crop.x);
+        flag_int32(p, "y", 'y',
+                   "Vertical offset of the crop box's top-left corner. Negative centers vertically: (in_h-out_h)/2 "
+                   "(default: -1).",
+                   &s_crop.y);
+        flag_bool(p, "copy-audio", 0, "Stream-copy the original audio instead of re-encoding (default: true).",
+                  &s_crop.copy_audio);
         flag_string(p, "vcodec", 0, "Output video codec.", &s_crop.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_crop.preset);
-        flag_int32(p, "crf", 0, "CRF.", &s_crop.crf);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_crop.preset);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_crop.crf);
     }
 
     /* ---- scale ---------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "scale", "Resize video with aspect-ratio control.", cmd_scale);
+        FlagParser* p = flag_add_subcommand(root, "scale",
+                                            "Resize video frames with configurable aspect-ratio handling.", cmd_scale);
         flag_req_string(p, "input", 'i', "Input file.", &s_scale.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_scale.output);
-        flag_int32(p, "width", 'w', "Target width.", &s_scale.width);
-        flag_int32(p, "height", 'h', "Target height.", &s_scale.height);
-        flag_string(p, "mode", 'm', "Scale mode: fit stretch pad.", &s_scale.mode_str);
-        flag_string(p, "pad-color", 'c', "Pad color.", &s_scale.pad_color);
-        flag_bool(p, "copy-audio", 0, "Stream-copy audio.", &s_scale.copy_audio);
+        flag_int32(p, "width", 'w', "Target width in pixels. At least one of --width or --height is required.",
+                   &s_scale.width);
+        flag_int32(p, "height", 'h', "Target height in pixels. At least one of --width or --height is required.",
+                   &s_scale.height);
+        flag_string(
+            p, "mode", 'm',
+            "Aspect-ratio handling: fit (scale preserving aspect ratio, default), stretch (force exact width/height, "
+            "ignoring aspect ratio; requires both --width and --height), or pad (scale to fit then letterbox/pillarbox "
+            "with --pad-color; requires both --width and --height).",
+            &s_scale.mode_str);
+        flag_string(p, "pad-color", 'c',
+                    "Background fill color for pad mode (e.g. black, white, 0x000000). Default: black.",
+                    &s_scale.pad_color);
+        flag_bool(p, "copy-audio", 0, "Stream-copy the original audio instead of re-encoding (default: true).",
+                  &s_scale.copy_audio);
         flag_string(p, "vcodec", 0, "Output video codec.", &s_scale.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_scale.preset);
-        flag_int32(p, "crf", 0, "CRF.", &s_scale.crf);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_scale.preset);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_scale.crf);
     }
 
     /* ---- rotate --------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "rotate", "Rotate or flip a video.", cmd_rotate);
+        FlagParser* p = flag_add_subcommand(root, "rotate", "Rotate or mirror video frames.", cmd_rotate);
         flag_req_string(p, "input", 'i', "Input file.", &s_rotate.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_rotate.output);
-        flag_req_string(p, "op", 'r', "Operation: 90cw 90ccw 180 hflip vflip.", &s_rotate.op_str);
-        flag_bool(p, "copy-audio", 0, "Stream-copy audio.", &s_rotate.copy_audio);
+        flag_req_string(p, "op", 'r',
+                        "Transform to apply: 90cw (rotate 90 degrees clockwise), 90ccw (rotate 90 degrees "
+                        "counter-clockwise), "
+                        "180 (rotate 180 degrees), hflip (mirror horizontally), or vflip (mirror vertically).",
+                        &s_rotate.op_str);
+        flag_bool(p, "copy-audio", 0, "Stream-copy the original audio instead of re-encoding (default: true).",
+                  &s_rotate.copy_audio);
         flag_string(p, "vcodec", 0, "Output video codec.", &s_rotate.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_rotate.preset);
-        flag_int32(p, "crf", 0, "CRF.", &s_rotate.crf);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_rotate.preset);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_rotate.crf);
     }
 
     /* ---- fade ----------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "fade", "Apply fade-in and/or fade-out to video/audio.", cmd_fade);
+        FlagParser* p = flag_add_subcommand(root, "fade",
+                                            "Apply linear fade-in and/or fade-out transitions to video and/or audio.",
+                                            cmd_fade);
         flag_req_string(p, "input", 'i', "Input file.", &s_fade.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_fade.output);
-        flag_bool(p, "fade-in", 0, "Apply fade-in.", &s_fade.fade_in);
-        flag_float(p, "fade-in-duration", 0, "Fade-in duration.", &s_fade.fade_in_seconds);
-        flag_bool(p, "fade-out", 0, "Apply fade-out.", &s_fade.fade_out);
-        flag_float(p, "fade-out-duration", 0, "Fade-out duration.", &s_fade.fade_out_seconds);
-        flag_float(p, "duration", 0, "Total duration.", &s_fade.total_duration);
-        flag_bool(p, "video", 0, "Apply fade to video.", &s_fade.video);
-        flag_bool(p, "audio", 0, "Apply fade to audio.", &s_fade.audio);
-        flag_string(p, "vcodec", 0, "Output video codec.", &s_fade.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_fade.preset);
-        flag_string(p, "acodec", 0, "Output audio codec.", &s_fade.audio_codec);
-        flag_int32(p, "crf", 0, "CRF.", &s_fade.crf);
+        flag_bool(p, "fade-in", 0,
+                  "Apply a fade-in starting at the beginning of the file. At least one of --fade-in or --fade-out is "
+                  "required.",
+                  &s_fade.fade_in);
+        flag_float(p, "fade-in-duration", 0, "Fade-in duration in seconds (default: 1.0).", &s_fade.fade_in_seconds);
+        flag_bool(p, "fade-out", 0,
+                  "Apply a fade-out ending at the output's duration limit. At least one of --fade-in or --fade-out is "
+                  "required.",
+                  &s_fade.fade_out);
+        flag_float(p, "fade-out-duration", 0, "Fade-out duration in seconds (default: 1.0).", &s_fade.fade_out_seconds);
+        flag_float(p, "duration", 0,
+                   "Total input duration in seconds, used to compute the fade-out start point. Probed automatically if "
+                   "omitted.",
+                   &s_fade.total_duration);
+        flag_bool(p, "video", 0, "Apply the fade to the video track (default: true).", &s_fade.video);
+        flag_bool(p, "audio", 0, "Apply the fade to the audio track (default: true).", &s_fade.audio);
+        flag_string(p, "vcodec", 0, "Output video codec, used only if a video fade is applied.", &s_fade.video_codec);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_fade.preset);
+        flag_string(p, "acodec", 0, "Output audio codec, used only if an audio fade is applied (default: aac).",
+                    &s_fade.audio_codec);
+        flag_int32(p, "crf", 0,
+                   "Constant Rate Factor quality target, used only if a video fade is applied (default: 18).",
+                   &s_fade.crf);
     }
 
     /* ---- deinterlace ---------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "deinterlace", "Deinterlace an interlaced video.", cmd_deinterlace);
+        FlagParser* p = flag_add_subcommand(root, "deinterlace",
+                                            "Remove interlacing artifacts from analog-source video.", cmd_deinterlace);
         flag_req_string(p, "input", 'i', "Input file.", &s_deinterlace.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_deinterlace.output);
-        flag_string(p, "mode", 'm', "Deinterlacing filter: yadif bwdif.", &s_deinterlace.mode_str);
-        flag_bool(p, "copy-audio", 0, "Stream-copy audio.", &s_deinterlace.copy_audio);
+        flag_string(p, "mode", 'm',
+                    "Deinterlacing filter: yadif (Yet Another Deinterlacing Filter, standard and fast, default) or "
+                    "bwdif (Bob Weaver Deinterlacing Filter, motion-adaptive, higher quality and cost).",
+                    &s_deinterlace.mode_str);
+        flag_bool(p, "copy-audio", 0, "Stream-copy the original audio instead of re-encoding (default: true).",
+                  &s_deinterlace.copy_audio);
         flag_string(p, "vcodec", 0, "Output video codec.", &s_deinterlace.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_deinterlace.preset);
-        flag_int32(p, "crf", 0, "CRF.", &s_deinterlace.crf);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_deinterlace.preset);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_deinterlace.crf);
     }
 
     /* ---- denoise -------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "denoise", "Reduce noise in video.", cmd_denoise);
+        FlagParser* p = flag_add_subcommand(root, "denoise", "Reduce video noise and compression artifacts.",
+                                            cmd_denoise);
         flag_req_string(p, "input", 'i', "Input file.", &s_denoise.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_denoise.output);
-        flag_string(p, "mode", 'm', "Denoising filter: hqdn3d nlmeans.", &s_denoise.mode_str);
-        flag_float(p, "strength", 's', "Denoising strength.", &s_denoise.strength);
-        flag_bool(p, "copy-audio", 0, "Stream-copy audio.", &s_denoise.copy_audio);
+        flag_string(p, "mode", 'm',
+                    "Denoising filter: hqdn3d (high-quality 3D spatial-temporal denoiser, fast and lightweight, "
+                    "default) or "
+                    "nlmeans (Non-Local Means, highly accurate edge preservation, computationally intensive).",
+                    &s_denoise.mode_str);
+        flag_float(p, "strength", 's',
+                   "Denoising strength, typically 0.0-10.0; higher filters more aggressively. Leave unset for the "
+                   "filter's built-in default.",
+                   &s_denoise.strength);
+        flag_bool(p, "copy-audio", 0, "Stream-copy the original audio instead of re-encoding (default: true).",
+                  &s_denoise.copy_audio);
         flag_string(p, "vcodec", 0, "Output video codec.", &s_denoise.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_denoise.preset);
-        flag_int32(p, "crf", 0, "CRF.", &s_denoise.crf);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_denoise.preset);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_denoise.crf);
     }
 
     /* ---- sharpen -------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "sharpen", "Sharpen or blur video.", cmd_sharpen);
+        FlagParser* p = flag_add_subcommand(root, "sharpen", "Sharpen edges and enhance focus using an unsharp mask.",
+                                            cmd_sharpen);
         flag_req_string(p, "input", 'i', "Input file.", &s_sharpen.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_sharpen.output);
-        flag_float(p, "amount", 'a', "Luma sharpening amount.", &s_sharpen.amount);
-        flag_bool(p, "copy-audio", 0, "Stream-copy audio.", &s_sharpen.copy_audio);
+        flag_float(p, "amount", 'a',
+                   "Luma sharpening amount, typically 0.0-2.0; ~0.5-1.0 is a common range (default: 1.0).",
+                   &s_sharpen.amount);
+        flag_bool(p, "copy-audio", 0, "Stream-copy the original audio instead of re-encoding (default: true).",
+                  &s_sharpen.copy_audio);
         flag_string(p, "vcodec", 0, "Output video codec.", &s_sharpen.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_sharpen.preset);
-        flag_int32(p, "crf", 0, "CRF.", &s_sharpen.crf);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_sharpen.preset);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_sharpen.crf);
     }
 
     /* ---- filter --------------------------------------------------- */
     {
-        FlagParser* p = flag_add_subcommand(root, "filter", "Apply raw filtergraphs.", cmd_filter);
+        FlagParser* p = flag_add_subcommand(root, "filter",
+                                            "Apply a custom raw video filter, audio filter, or filtergraph for "
+                                            "advanced use cases.",
+                                            cmd_filter);
         flag_req_string(p, "input", 'i', "Input file.", &s_filter.input);
         flag_req_string(p, "output", 'o', "Output file.", &s_filter.output);
-        flag_string(p, "vf", 0, "Raw -vf string.", &s_filter.video_filter);
-        flag_string(p, "af", 0, "Raw -af string.", &s_filter.audio_filter);
-        flag_string(p, "filter-complex", 0, "Raw -filter_complex.", &s_filter.filter_complex);
-        flag_string(p, "maps", 0, "Comma-separated complex output maps.", &s_filter.complex_maps_str);
-        flag_string(p, "vcodec", 0, "Output video codec.", &s_filter.video_codec);
-        flag_string(p, "preset", 'p', "Encoder preset.", &s_filter.preset);
-        flag_string(p, "acodec", 0, "Output audio codec.", &s_filter.audio_codec);
-        flag_int32(p, "crf", 0, "CRF.", &s_filter.crf);
+        flag_string(p, "vf", 0,
+                    "Raw video filter chain string (e.g. hqdn3d=1.5,unsharp=5:5:1.0:5:5:1.0). Maps to -vf. Exactly one "
+                    "of --vf, --af, or --filter-complex is required.",
+                    &s_filter.video_filter);
+        flag_string(p, "af", 0,
+                    "Raw audio filter chain string (e.g. volume=1.5,lowpass=f=3000). Maps to -af. Exactly one of --vf, "
+                    "--af, or --filter-complex is required.",
+                    &s_filter.audio_filter);
+        flag_string(p, "filter-complex", 0,
+                    "Raw complex filtergraph script (e.g. [0:v][1:v]overlay=10:10[outv]). Maps to -filter_complex. "
+                    "Exactly one of --vf, --af, or --filter-complex is required.",
+                    &s_filter.filter_complex);
+        flag_string(p, "maps", 0,
+                    "Comma-separated complex filtergraph output labels to map to the output (e.g. [outv],[outa]). Each "
+                    "becomes a -map argument. Only used with --filter-complex.",
+                    &s_filter.complex_maps_str);
+        flag_string(p, "vcodec", 0,
+                    "Output video codec. Only used with --filter-complex (--vf uses the single-filter video pipeline).",
+                    &s_filter.video_codec);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_filter.preset);
+        flag_string(p, "acodec", 0, "Output audio codec (default: aac). Used with --af or --filter-complex.",
+                    &s_filter.audio_codec);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_filter.crf);
     }
 }
 
@@ -1052,12 +1213,13 @@ int main(int argc, char* argv[]) {
     flag_bool(root, "verbose", 'v', "Show FFmpeg output.", &ctx.verbose);
     flag_bool(root, "dry-run", 'n', "Print assembled command.", &ctx.dry_run);
     flag_bool(root, "no-overwrite", 0, "Do not overwrite existing files.", &ctx.no_overwrite);
-    flag_string(root, "hw", 0, "HW accel option.", &ctx.hw_accel_str);
+    flag_string(root, "hw", 0, "Hardware acceleration backend: nvenc, qsv, vt, vaapi, or amf. Maps to -hwaccel.",
+                &ctx.hw_accel_str);
 
-    flag_add_completion_cmd(root);
     flag_set_pre_invoke(root, pre_invoke);
     register_subcommands(root, &ctx);
 
+    flag_add_completion_cmd(root);
     FlagStatus fs = flag_parse_and_invoke(root, argc, argv, &ctx);
     if (fs != FLAG_OK) {
         fprintf(stderr, "ffx: %s\n", flag_get_error(root));

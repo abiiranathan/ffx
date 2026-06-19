@@ -9,3 +9,4 @@ $(TARGET): $(SRCS)
 
 clean:
 	rm -rf $(TARGET)
+	

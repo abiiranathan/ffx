@@ -500,16 +500,18 @@ done:
  * 
  * ### Executed FFmpeg Flags:
  * **Pass 1 (palettegen):**
+ * - `-ss <start>`            Fast-seeks the input to the start position (if specified).
+ * - `-t <duration>`          Limits the input duration (if specified).
  * - `-i <input>`             Sets the primary input file path.
- * - `-vf "...palettegen=stats_mode=..."` Generates an optimized 256-color palette based on the video frames.
- *                            The `stats_mode` parameter (e.g., "full" or "diff") controls color frequency analysis.
+ * - `-vf "fps=...,scale=...,palettegen=stats_mode=..."` Generates an optimized 256-color palette.
  * 
  * **Pass 2 (paletteuse):**
+ * - `-ss <start>`            Fast-seeks the input to the start position (if specified).
+ * - `-t <duration>`          Limits the input duration (if specified).
  * - `-i <input>`             Sets the primary input file path.
- * - `-i <palette_path>`      Loads the 256-color optimized palette file generated in Pass 1.
- * - `-filter_complex "[0:v]...[x];[x][1:v]paletteuse"` Maps the input video through scaling filters 
- *                            and applies the custom color palette for dithering.
- * - `-loop <loop_count>`     Specifies animation looping behaviors (`-1` disables looping; `0` loops indefinitely).
+ * - `-i <palette_path>`      Loads the 256-color optimized palette file.
+ * - `-filter_complex "[0:v]fps=...,scale=...[x];[x][1:v]paletteuse"` Applies the custom color palette.
+ * - `-loop <loop_count>`     Specifies animation looping behaviors.
  * 
  * @param opts Configuration options structure.
  * @return FFX_OK on success, or an error status code on failure.
@@ -523,22 +525,11 @@ FfxStatus ffx_gif(const FfxGifOpts* opts) {
     if (!ffx_build_sidecar_path(opts->output, "_palette.png", palette_path, sizeof(palette_path))) {
         return FFX_ERR_IO;
     }
+
+    // Construct base video filters (trim/setpts are no longer needed here)
     char vf_base[256];
-    {
-        size_t pos = 0;
-        if (opts->start != NULL) {
-            int n = snprintf(vf_base + pos, sizeof(vf_base) - pos, "trim=start=%s", opts->start);
-            if (n > 0) pos += (size_t)n;
-            if (opts->duration != NULL) {
-                n = snprintf(vf_base + pos, sizeof(vf_base) - pos, ":duration=%s", opts->duration);
-                if (n > 0) pos += (size_t)n;
-            }
-            n = snprintf(vf_base + pos, sizeof(vf_base) - pos, ",setpts=PTS-STARTPTS,");
-            if (n > 0) pos += (size_t)n;
-        }
-        int n = snprintf(vf_base + pos, sizeof(vf_base) - pos, "fps=%d,scale=%d:-1:flags=lanczos", fps, width);
-        (void)n;
-    }
+    snprintf(vf_base, sizeof(vf_base), "fps=%d,scale=%d:-1:flags=lanczos", fps, width);
+
     FfxStatus st = FFX_OK;
 
     /* ---- Pass 1: palettegen ---------------------------------------- */
@@ -550,7 +541,12 @@ FfxStatus ffx_gif(const FfxGifOpts* opts) {
             ffx_argv_free(&av);
             return st;
         }
+
+        // Apply temporal options before the input file for demuxer-level fast seeking
+        if (opts->start != NULL) { ffx_argv_push2(&av, "-ss", opts->start); }
+        if (opts->duration != NULL) { ffx_argv_push2(&av, "-t", opts->duration); }
         ffx_argv_push2(&av, "-i", opts->input);
+
         char vf[512];
         snprintf(vf, sizeof(vf), "%s,palettegen=stats_mode=%s", vf_base, stats);
         ffx_argv_push2(&av, "-vf", vf);
@@ -569,8 +565,12 @@ FfxStatus ffx_gif(const FfxGifOpts* opts) {
             ffx_argv_free(&av);
             goto cleanup_palette;
         }
+        // Match seeking parameters precisely with Pass 1
+        if (opts->start != NULL) { ffx_argv_push2(&av, "-ss", opts->start); }
+        if (opts->duration != NULL) { ffx_argv_push2(&av, "-t", opts->duration); }
         ffx_argv_push2(&av, "-i", opts->input);
         ffx_argv_push2(&av, "-i", palette_path);
+
         char vf[512];
         snprintf(vf, sizeof(vf), "[0:v] %s [x]; [x][1:v] paletteuse", vf_base);
         ffx_argv_push2(&av, "-filter_complex", vf);
