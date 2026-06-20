@@ -137,6 +137,37 @@ typedef struct {
 FfxStatus ffx_run_single_vf(const FfxSingleVfOpts* opts);
 
 /**
+ * @brief Parameters for cutting a single segment out of a source file.
+ * @details Used by the desilence segment-then-concat pipeline. Segments are re-encoded
+ * (not stream-copied) because stream copy cannot reliably start mid-GOP — many kept
+ * spans after desilencing are sub-second and won't span a keyframe, which causes
+ * ffmpeg's stream-copy path to silently drop the video stream for that segment.
+ * Re-encoding trades some speed for guaranteed correctness on arbitrary boundaries.
+ */
+typedef struct {
+    const char* input;        /**< Path to source media file. Required. */
+    const char* output;       /**< Path to destination segment file. Required. */
+    double start_seconds;     /**< Start offset into the source file, in seconds. */
+    double duration_seconds;  /**< Duration of the segment to extract, in seconds. */
+    const char* video_codec;  /**< Target video encoder codec. NULL selects a sensible default for common.hw_accel. */
+    const char* video_preset; /**< Encoder speed/quality preset (e.g. "ultrafast"). NULL omits -preset. */
+    const char* audio_codec;  /**< Target audio encoder codec. NULL defaults to "aac". */
+    int crf;                  /**< Constant Rate Factor quality target. <= 0 defaults to 18. */
+    const FfxCommonOpts* common; /**< Common options parameters block. */
+} FfxSegmentCutOpts;
+
+/**
+ * @brief Cuts and re-encodes a single segment from a source file at frame-accurate
+ * boundaries.
+ * @details Uses output-side seeking (`-i` before `-ss`) for timestamp accuracy. Unlike
+ * a stream-copy cut, this always produces video output regardless of segment length or
+ * keyframe placement, at the cost of a full decode/encode pass over the segment.
+ * @param opts Configuration options structure.
+ * @return FFX_OK on success, or a negative status code on failure.
+ */
+FfxStatus ffx_cut_segment(const FfxSegmentCutOpts* opts);
+
+/**
  * @brief Appends a suffix to an output file name to create an auxiliary or sidecar path.
  * @details Helps construct paths for two-pass encoding logs, temp files, or palettes.
  * @param output Original output file path.
@@ -175,6 +206,18 @@ FfxStatus ffx_run(const FfxArgv* av, const FfxCommonOpts* co);
  */
 FfxStatus ffx_run_capture(const FfxArgv* av, const FfxCommonOpts* co, char* out_buf, size_t out_buf_size,
                           size_t* out_len);
+
+/**
+ * @brief Spawns a process and captures its standard error stream in a buffer.
+ * @param av Populated dynamic argument vector configuration.
+ * @param co Common options configuration parameters.
+ * @param out_buf Buffer to receive the standard error stream data.
+ * @param out_buf_size Capacity of the provided capture buffer.
+ * @param out_len Optional pointer populated with the actual bytes written to out_buf.
+ * @return FFX_OK on success, or a negative status code on failure.
+ */
+FfxStatus ffx_run_capture_stderr(const FfxArgv* av, const FfxCommonOpts* co, char* out_buf, size_t out_buf_size,
+                                 size_t* out_len);
 
 /**
  * @brief Internal inline initializer helper that locates the required binary and sets up the base command line.

@@ -248,6 +248,26 @@ static struct {
     int32_t crf;
 } s_filter = {.crf = 18};
 
+static struct {
+    const char* input;
+    float noise_floor;
+    float min_duration;
+} s_silence_detect = {.noise_floor = -30.0f, .min_duration = 0.5f};
+
+static struct {
+    const char* input;
+    const char* output;
+    float noise_floor;
+    float min_duration;
+    float pad_seconds;
+    bool smooth;
+    float target_lufs;
+    const char* video_codec;
+    const char* preset;
+    const char* audio_codec;
+    int32_t crf;
+} s_desilence = {.noise_floor = -30.0f, .min_duration = 0.5f, .crf = 18, .pad_seconds = 0.1};
+
 /* =========================================================================
  * Subcommands invocation callbacks
  * ========================================================================= */
@@ -774,6 +794,53 @@ static void cmd_filter(void* user_data) {
     free(map_buf);
 }
 
+static void cmd_silence_detect(void* user_data) {
+    AppCtx* ctx = (AppCtx*)user_data;
+    if (s_silence_detect.input == NULL) {
+        fprintf(stderr, "ffx silence-detect: --input is required\n");
+        return;
+    }
+    FfxSilenceDetectOpts opts = {
+        .input = s_silence_detect.input,
+        .noise_floor_db = s_silence_detect.noise_floor,
+        .min_duration_seconds = s_silence_detect.min_duration,
+        .common = ctx->common,
+    };
+    FfxSilenceResult result = {0};
+    FfxStatus st = ffx_silence_detect(&opts, &result);
+    if (st != FFX_OK) {
+        fprintf(stderr, "ffx silence-detect: %s\n", ffx_status_str(st));
+        free(result.intervals);
+        return;
+    }
+    if (!ctx->common.dry_run) { ffx_silence_print(&result); }
+    free(result.intervals); /* Clean up dynamically allocated memory */
+}
+
+static void cmd_desilence(void* user_data) {
+    AppCtx* ctx = (AppCtx*)user_data;
+    if (s_desilence.input == NULL || s_desilence.output == NULL) {
+        fprintf(stderr, "ffx desilence: --input and --output are required\n");
+        return;
+    }
+    FfxDesilenceOpts opts = {
+        .input = s_desilence.input,
+        .output = s_desilence.output,
+        .noise_floor_db = s_desilence.noise_floor,
+        .min_duration_seconds = s_desilence.min_duration,
+        .pad_seconds = s_desilence.pad_seconds,
+        .smooth_audio = s_desilence.smooth,
+        .target_lufs = s_desilence.target_lufs,
+        .video_codec = s_desilence.video_codec,
+        .video_preset = s_desilence.preset,
+        .audio_codec = s_desilence.audio_codec,
+        .crf = (int)s_desilence.crf,
+        .common = ctx->common,
+    };
+    FfxStatus st = ffx_desilence(&opts);
+    if (st != FFX_OK) { fprintf(stderr, "ffx desilence: %s\n", ffx_status_str(st)); }
+}
+
 /* =========================================================================
  * Root parser construction and subcommand registration
  * ========================================================================= */
@@ -1180,6 +1247,40 @@ static void register_subcommands(FlagParser* root, AppCtx* ctx) {
         flag_string(p, "acodec", 0, "Output audio codec (default: aac). Used with --af or --filter-complex.",
                     &s_filter.audio_codec);
         flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_filter.crf);
+    }
+
+    /* ---- silence-detect ------------------------------------------ */
+    {
+        FlagParser* p = flag_add_subcommand(root, "silence-detect",
+                                            "Analyze a media file and list silence interval timestamps.",
+                                            cmd_silence_detect);
+        flag_req_string(p, "input", 'i', "Input file path.", &s_silence_detect.input);
+        flag_float(p, "noise", 'n', "Noise floor threshold in dB (default: -30.0).", &s_silence_detect.noise_floor);
+        flag_float(p, "duration", 'd', "Minimum silence duration in seconds (default: 0.5).",
+                   &s_silence_detect.min_duration);
+    }
+
+    /* ---- desilence ----------------------------------------------- */
+    {
+        FlagParser* p = flag_add_subcommand(root, "desilence", "Remove silent periods and rejoin remaining content.",
+                                            cmd_desilence);
+        flag_req_string(p, "input", 'i', "Input file path.", &s_desilence.input);
+        flag_req_string(p, "output", 'o', "Output file path.", &s_desilence.output);
+        flag_float(p, "noise", 'n', "Noise floor threshold in dB (default: -30.0).", &s_desilence.noise_floor);
+        flag_float(p, "duration", 'd', "Minimum silence duration in seconds (default: 0.5).",
+                   &s_desilence.min_duration);
+        flag_float(p, "pad", 0,
+                   "Silence padding retained around each cut point, in seconds (default: 0.1). Prevents speech "
+                   "onsets/offsets from being clipped abruptly.",
+                   &s_desilence.pad_seconds);
+        flag_bool(p, "smooth", 's', "Apply dynamic audio normalization (dynaudnorm) to smooth volume changes.",
+                  &s_desilence.smooth);
+        flag_float(p, "target-lufs", 'l', "Loudness normalization target in LUFS (e.g. -23.0). Set to 0.0 to disable.",
+                   &s_desilence.target_lufs);
+        flag_string(p, "vcodec", 'V', "Video codec used when re-encoding.", &s_desilence.video_codec);
+        flag_string(p, "preset", 'p', "Encoder speed/quality preset.", &s_desilence.preset);
+        flag_string(p, "acodec", 'A', "Audio codec used when re-encoding (default: aac).", &s_desilence.audio_codec);
+        flag_int32(p, "crf", 0, "Constant Rate Factor quality target (default: 18).", &s_desilence.crf);
     }
 }
 

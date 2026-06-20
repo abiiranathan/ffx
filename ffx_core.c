@@ -317,6 +317,12 @@ FfxStatus ffx_probe_duration(const char* input, const FfxCommonOpts* common, dou
     };
     /* Always silence metadata probing to prevent polling output from clobbering progress metrics. */
     probe_opts.common.log_level = FFX_LOG_QUIET;
+    /* Probing is read-only and must run even when the caller is in dry-run mode —
+     * dry_run is for previewing mutating ffmpeg invocations, not for skipping the
+     * informational ffprobe calls other commands depend on to construct those
+     * invocations correctly (e.g. desilence needs the real duration to bound its
+     * final kept span; fade needs it to compute fade-out start). */
+    probe_opts.common.dry_run = false;
 
     FfxProbeResult result = {0};
     FfxStatus st = ffx_probe(&probe_opts, &result);
@@ -504,6 +510,119 @@ FfxStatus ffx_run_capture(const FfxArgv* av, const FfxCommonOpts* co, char* out_
 cleanup_pipe:
     pipe_close(stdout_pipe);
     return status;
+}
+
+FfxStatus ffx_run_capture_stderr(const FfxArgv* av, const FfxCommonOpts* co, char* out_buf, size_t out_buf_size,
+                                 size_t* out_len) {
+    if (av == NULL || out_buf == NULL || out_buf_size == 0) { return FFX_ERR_INVALID_ARGUMENT; }
+
+    if (co != NULL && co->dry_run) {
+        print_argv((const char* const*)av->args, av->count);
+        out_buf[0] = '\0';
+        if (out_len != NULL) { *out_len = 0; }
+        return FFX_OK;
+    }
+
+    PipeHandle* stderr_pipe = NULL;
+    ProcessHandle* handle = NULL;
+
+    /* Initialize a pipe structure to redirect and intercept standard error. */
+    if (pipe_create(&stderr_pipe) != PROCESS_SUCCESS) { return FFX_ERR_IO; }
+
+    ProcessOptions options = {
+        .working_directory = NULL,
+        .inherit_environment = true,
+        .environment = NULL,
+        .detached = false,
+        .io =
+            {
+                .stdin_pipe = NULL,
+                .stdout_pipe = NULL,
+                .stderr_pipe = stderr_pipe, /* Map child output to write end of pipe */
+                .merge_stderr = false,
+            },
+    };
+
+    FfxStatus status = FFX_OK;
+
+    ProcessError pe = process_create(&handle, av->args[0], (const char* const*)av->args, &options);
+    if (pe != PROCESS_SUCCESS) {
+        status = FFX_ERR_SPAWN_FAILED;
+        goto cleanup_pipe;
+    }
+
+    /* Close write end in the parent context to trigger EOF once child process terminates. */
+    pipe_close_write_end(stderr_pipe);
+
+    /* Read and capture stderr stream output directly into the provided output memory buffer. */
+    size_t total = 0;
+    while (total < out_buf_size - 1) {
+        size_t nread = 0;
+        ProcessError re = pipe_read(stderr_pipe, out_buf + total, out_buf_size - 1 - total, &nread, -1);
+        if (re == PROCESS_ERROR_PIPE_CLOSED || nread == 0) { break; }
+        if (re != PROCESS_SUCCESS) {
+            status = FFX_ERR_IO;
+            break;
+        }
+        total += nread;
+    }
+    out_buf[total] = '\0';
+    if (out_len != NULL) { *out_len = total; }
+
+    ProcessResult result = {0};
+    process_wait(handle, &result, -1);
+    process_free(handle);
+
+    if (!result.exited_normally || result.exit_code != 0) { status = FFX_ERR_FFMPEG_FAILED; }
+
+cleanup_pipe:
+    pipe_close(stderr_pipe);
+    return status;
+}
+
+FfxStatus ffx_cut_segment(const FfxSegmentCutOpts* opts) {
+    if (opts == NULL || opts->input == NULL || opts->output == NULL || opts->common == NULL) {
+        return FFX_ERR_INVALID_ARGUMENT;
+    }
+    if (opts->duration_seconds <= 0.0) { return FFX_ERR_INVALID_ARGUMENT; }
+
+    char start_buf[32];
+    char dur_buf[32];
+    int n = snprintf(start_buf, sizeof(start_buf), "%.3f", opts->start_seconds);
+    if (n < 0 || (size_t)n >= sizeof(start_buf)) { return FFX_ERR_INVALID_ARGUMENT; }
+    n = snprintf(dur_buf, sizeof(dur_buf), "%.3f", opts->duration_seconds);
+    if (n < 0 || (size_t)n >= sizeof(dur_buf)) { return FFX_ERR_INVALID_ARGUMENT; }
+
+    FfxArgv av;
+    ffx_argv_init(&av);
+
+    FfxStatus st = ffx_argv_begin(&av, "ffmpeg", opts->common);
+    if (st != FFX_OK) { goto done; }
+
+    /* Output-side seeking: -i precedes -ss. Combined with re-encoding (no -c copy),
+     * this guarantees both timestamp accuracy and that every segment, regardless of
+     * how short or where it falls relative to keyframes, always produces valid
+     * video and audio output. */
+    ffx_argv_push2(&av, "-i", opts->input);
+    ffx_argv_push2(&av, "-ss", start_buf);
+    ffx_argv_push2(&av, "-t", dur_buf);
+
+    ffx_argv_push_video_codec(&av, opts->video_codec, opts->common->hw_accel);
+    if (opts->video_preset != NULL) { ffx_argv_push2(&av, "-preset", opts->video_preset); }
+    const int crf = (opts->crf > 0) ? opts->crf : 18;
+    ffx_argv_push_int(&av, "-crf", crf);
+
+    const char* ac = (opts->audio_codec != NULL) ? opts->audio_codec : "aac";
+    ffx_argv_push2(&av, "-c:a", ac);
+
+    ffx_argv_push2(&av, "-avoid_negative_ts", "make_zero");
+    ffx_argv_push(&av, opts->output);
+
+    st = ffx_run(&av, opts->common);
+
+done:
+    ffx_argv_free(&av);
+    return st;
 }
 
 /* =========================================================================

@@ -653,6 +653,57 @@ Provides direct access to raw FFmpeg filtergraphs for advanced users.
 
 ---
 
+### 3.19. `silence-detect`
+Scans a media file's audio stream for silent periods below a given decibel threshold and outputs the timestamps.
+
+*   **Subcommand Storage Structure:**
+    ```c
+    static struct {
+        const char* input;
+        float noise_floor;
+        float min_duration;
+    } s_silence_detect;
+    ```
+
+*   **Flag Mappings:**
+    *   `-i`, `--input` (Required, String): Path to the source file.
+    *   `-n`, `--noise` (Float, Default: -30.0): Decibel limit below which signal is evaluated as silence. Maps to `silencedetect=noise`.
+    *   `-d`, `--duration` (Float, Default: 0.5): Minimum length in seconds for a quiet interval to be recognized as silence. Maps to `silencedetect=d`.
+
+---
+
+### 3.20. `desilence`
+Detects silent sections, removes them, and rejoins non-silent segments in a single rendering pass. Supports optional audio smoothing and leveling filters.
+
+*   **Subcommand Storage Structure:**
+    ```c
+    static struct {
+        const char* input;         const char* output;
+        float noise_floor;         float min_duration;
+        bool smooth;               float target_lufs;
+        const char* video_codec;   const char* preset;
+        const char* audio_codec;   int32_t crf;
+    } s_desilence;
+    ```
+
+*   **Flag Mappings:**
+    *   `-i`, `--input` (Required, String): Input file path.
+    *   `-o`, `--output` (Required, String): Output file path.
+    *   `-n`, `--noise` (Float, Default: -30.0): Noise floor threshold in decibels (dB).
+    *   `-d`, `--duration` (Float, Default: 0.5): Minimum silence duration in seconds.
+    *   `-s`, `--smooth` (Boolean): Applies dynamic audio normalization (`dynaudnorm`) to balance quiet/loud elements.
+    *   `-l`, `--target-lufs` (Float, Default: 0.0): Target LUFS loudness normalization level.
+    *   `-V`, `--vcodec` (String): Output video encoder codec choice.
+    *   `-p`, `--preset` (String): Speed-to-compression ratio preset.
+    *   `-A`, `--acodec` (String): Output audio encoder codec choice (default: `aac`).
+    *   `--crf` (Int32, Default: 18): Constant Rate Factor.
+
+*   **Filter Application Mechanics:**
+    1.  **Interval Complement Calculation**: Parses silence segments from a detection pass, computing the non-silent "kept" timelines.
+    2.  **Filtergraph Generation**: Uses `select` and `aselect` with boolean time checks to keep the video and audio aligned during removal:
+        `[0:v]select='between(t,...)',setpts=...[vout];[0:a]aselect='between(t,...)',asetpts=...[aout]`
+    3.  **Volume Leveling**: Chains `dynaudnorm` (dynamic range compression) and `loudnorm` filters directly onto the audio track when enabled to smooth out sound inconsistencies.
+
 ## 4. Key Implementation Mechanics
 
 The tool handles command generation, dynamic memory management, and error handling through several notable patterns:

@@ -941,6 +941,80 @@ bool ffx_find_ffmpeg(char* buf, size_t buflen);
  */
 bool ffx_find_ffprobe(char* buf, size_t buflen);
 
+/**
+ * @brief Structure containing parsed parameters of a detected silent interval.
+ */
+typedef struct {
+    double start_seconds;    /**< Start timestamp of the silence in seconds. */
+    double end_seconds;      /**< End timestamp of the silence in seconds. */
+    double duration_seconds; /**< Duration of the silent period in seconds. */
+} FfxSilenceInterval;
+
+/**
+ * @brief Combined silence tracking result returned from analysis operations.
+ */
+typedef struct {
+    FfxSilenceInterval* intervals; /**< Dynamically allocated array of detected silent spans. */
+    size_t interval_count;         /**< Total number of intervals recorded. */
+    size_t interval_capacity;      /**< Current allocated capacity of the array. */
+    bool trailing_silence_open;    /**< True if the file ended in a silent state. */
+} FfxSilenceResult;
+
+/**
+ * @brief Options structure for detecting silent sections using the silence filter.
+ */
+typedef struct {
+    const char* input;          /**< Path to target media file. Required. */
+    float noise_floor_db;       /**< Noise floor threshold in decibels (default: -30.0 dB). */
+    float min_duration_seconds; /**< Minimum silence duration threshold in seconds (default: 0.5 s). */
+    FfxCommonOpts common;       /**< Common options configuration block. */
+} FfxSilenceDetectOpts;
+
+/**
+ * @brief Options structure for removing silent periods and re-encoding.
+ */
+typedef struct {
+    const char* input;          /**< Path to input media file. Required. */
+    const char* output;         /**< Path to output file destination. Required. */
+    float noise_floor_db;       /**< Noise floor threshold in decibels (default: -30.0 dB). */
+    float min_duration_seconds; /**< Minimum silence duration threshold in seconds (default: 0.5 s). */
+
+    /**< Silence padding retained at each cut, in seconds (default: 0.1). Keeps speech onsets/offsets from sounding clipped. */
+    float pad_seconds;
+    bool smooth_audio; /**< Apply dynamic audio normalization (dynaudnorm) to smooth volume levels. */
+    float target_lufs; /**< Target LUFS loudness normalization value. Set to 0.0f to disable. */
+
+    /**< Target video encoder codec standard. Only used if smooth_audio or target_lufs requires a final re-encode pass. */
+    const char* video_codec;
+
+    /**< Performance preset configuration standard. Only used if a final re-encode pass occurs. */
+    const char* video_preset;
+    const char* audio_codec; /**< Target audio encoder codec standard. Only used if a final re-encode pass occurs. */
+    int crf;                 /**< Constant Rate Factor quality target. Only used if a final re-encode pass occurs. */
+    FfxCommonOpts common;    /**< Common options configuration block. */
+} FfxDesilenceOpts;
+
+/**
+ * @brief Scans a media file's audio track for silent sections below a given decibel floor.
+ * @param opts Configuration options structure.
+ * @param result Pointer to pre-allocated results structure populated on success.
+ * @return FFX_OK on success, or a negative status code on failure.
+ */
+FfxStatus ffx_silence_detect(const FfxSilenceDetectOpts* opts, FfxSilenceResult* result);
+
+/**
+ * @brief Formats and prints a space-separated list of silence intervals to stdout.
+ * @param result Pointer to populated silence detection results.
+ */
+void ffx_silence_print(const FfxSilenceResult* result);
+
+/**
+ * @brief Removes silent intervals from media, joining non-silent blocks with optional leveling filters.
+ * @param opts Configuration options structure.
+ * @return FFX_OK on success, or a negative status code on failure.
+ */
+FfxStatus ffx_desilence(const FfxDesilenceOpts* opts);
+
 #ifdef __cplusplus
 }
 #endif
